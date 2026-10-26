@@ -39,6 +39,11 @@
         "killGraceSeconds": 30,
         "connectAttempts": 10,
         "reloginDelaySeconds": 60,
-        "progressDirectory": "progress"
+        "progressDirectory": "progress",
+        // Where the client writes status/<name>.json: every account's state and skill levels, for tools
+        // such as tools/gui. "" turns it off.
+        "statusDirectory": "status",
+        // The status file's name; "" uses the stem of client.logFile, or "client" without one.
+        "statusName": ""
     }
 }

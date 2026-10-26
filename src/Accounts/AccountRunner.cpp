@@ -33,6 +33,22 @@ AccountRunner::AccountRunner(std::shared_ptr<const Config_s> config, std::shared
 {
     assert(m_cache && "AccountRunner needs a cache");
 
+    if (!m_config->scripting.statusDirectory.empty())
+    {
+        // The stem of the log file names the status too, so each world's client config gets its own:
+        // rs2004-headless-w1.log -> status/rs2004-headless-w1.json.
+        auto name = m_config->scripting.statusName;
+        if (name.empty())
+        {
+            name = std::filesystem::path{m_config->client.logFile}.stem().string();
+        }
+        if (name.empty())
+        {
+            name = "client";
+        }
+        m_status.emplace(std::filesystem::path{m_config->scripting.statusDirectory} / (name + ".json"), m_config->server.host);
+    }
+
     options.client.loginQueue = m_loginQueue;
     for (auto& account : accounts)
     {
@@ -93,6 +109,8 @@ bool AccountRunner::Run(const InterruptCount& interrupts, ConsoleInput* console)
         {
             break;
         }
+
+        WriteStatus();
 
         Wait(now);
     }
@@ -248,6 +266,24 @@ void AccountRunner::Wait(Clock::time_point now) const
 
     // Wakes early for any account's I/O, and for a console line through SetOnArrived.
     m_net->Wait(wake);
+}
+
+void AccountRunner::WriteStatus()
+{
+    if (!m_status)
+    {
+        return;
+    }
+
+    auto signature = std::string{};
+    for (const auto& account : m_accounts)
+    {
+        std::format_to(std::back_inserter(signature), "{}:{}:{}|", account->GetName(), static_cast<int>(account->GetClient().GetStatus()), account->GetScriptFile());
+    }
+
+    const auto lifeChanged = signature != m_statusSignature;
+    m_statusSignature = std::move(signature);
+    m_status->Step(Clock::now(), m_accounts, lifeChanged);
 }
 
 bool AccountRunner::LogOutcomes() const

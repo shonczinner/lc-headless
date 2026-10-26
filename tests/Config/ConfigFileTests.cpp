@@ -101,7 +101,9 @@ namespace
         "killGraceSeconds": 30,
         "connectAttempts": 10,
         "reloginDelaySeconds": 60,
-        "progressDirectory": "progress"
+        "progressDirectory": "progress",
+        "statusDirectory": "status",
+        "statusName": ""
     }
 }
 )json"sv;

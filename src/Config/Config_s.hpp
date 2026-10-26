@@ -38,6 +38,12 @@ struct ScriptingSettings_s
     s32 connectAttempts = 10;
     std::chrono::seconds reloginDelaySeconds = 60s;
     std::string progressDirectory = "progress";
+    // Where the client writes status/<name>.json for tools that read it (tools/gui, tools/bank_report.py):
+    // every account's state and skill levels, every few minutes. Empty turns it off.
+    std::string statusDirectory = "status";
+    // The name of that file, so a world's file doesn't collide with another's. Defaults to the stem of
+    // client.logFile, or "client" without one.
+    std::string statusName;
 };
 
 // client.jsonc.

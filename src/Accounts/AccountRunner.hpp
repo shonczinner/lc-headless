@@ -12,6 +12,7 @@
 #include "../Script/ScriptRuntime.hpp"
 #include "Account.hpp"
 #include "AccountCommands.hpp"
+#include "StatusWriter.hpp"
 
 // Every account's script loads on construction, so a broken script stops everything before the first login.
 class AccountRunner
@@ -35,6 +36,8 @@ public:
 
     [[nodiscard]] std::size_t GetAccountCount() const;
     [[nodiscard]] const Account& GetAccount(std::size_t index) const;
+    // Writes the status file now when an account's lifecycle changed, or when the interval is due.
+    void WriteStatus();
 
 private:
     void StartNextLogin(Clock::time_point now);
@@ -60,4 +63,8 @@ private:
     std::optional<Clock::time_point> m_nextLogin;
     // Accounts quit from the console before their turn, which never log in.
     std::unordered_set<const Account*> m_cancelled;
+    // Every account's state and skills, for tools that read it. Absent when scripting.statusDirectory is empty.
+    std::optional<StatusWriter> m_status;
+    // The lifecycle signature last written, so a login or logout is written at once.
+    std::string m_statusSignature;
 };
