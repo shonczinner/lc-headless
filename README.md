@@ -11,6 +11,7 @@ A headless (shell/packet) game client for LostCity private servers (2004scape, *
 - **The game cache.** It loads the server's cache once per process and shares it with every account. The login CRCs are computed from it, scripts get the names and options of NPCs, items and scenery, scenery the server never changed is known, and walks and interactions route around walls as the webclient does.
 - **Python scripting** on an embedded [pocketpy](https://github.com/pocketpy/pocketpy) interpreter, with [rs2b0t](https://github.com/rs2b2t/rs2b0t)'s bot API in Python's style: `npcs`, `inventory`, `bank` and the other facades, chained queries, `LoopingBot`, `TaskBot` and `TreeBot`, a world walker, random-event solvers and typed settings.
 - **Several accounts per process.** Each account has its own interpreter and its own log name, and logins are spaced a few seconds apart. An account can log into a different world from the others.
+- **A local web view (optional):** `tools/gui/` shows each account's state, skill levels and xp/hr, and the bank totals, and can start and stop the accounts. It runs only when you start it.
 - **Tools for script authors:**
   - progress reports written to a file
   - messages between scripts, and console commands of a script's own
@@ -131,6 +132,12 @@ While it runs, the client takes commands typed into its console: `help` lists th
 3. A third Ctrl+C closes any connection whose logout the server is still refusing. The server refuses a logout during combat and for 10 seconds after it.
 
 The exit code is 0 only when every account logged out cleanly and no script failed.
+
+**Status, banks and the local web view.** Every client writes `status/<name>.json` (each account's state
+and skill levels, every five minutes) and `bank/<account>.json` (a bank's contents each time one opens),
+for tools to read. `tools/gui/server.py` is a small page over them: skill levels with xp/hr, bank totals,
+and — only when started with `--clients client.jsonc …` — Start and Stop. It is never started by the
+client. See [docs/Tooling.md](docs/Tooling.md).
 
 ## Writing scripts
 
