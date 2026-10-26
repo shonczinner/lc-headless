@@ -10,6 +10,8 @@ cd "$(dirname "$0")"
 WAIT=${WAIT:-120}
 LOGIN_WAIT=${LOGIN_WAIT:-300}
 
+trap 'echo "fleet.sh: cancelled"; exit 143' TERM INT
+
 echo "== stopping running fleet =="
 sh stop.sh >/dev/null 2>&1 || true
 sleep 2
@@ -21,11 +23,17 @@ if pgrep -f "[R]s2004Headless" >/dev/null 2>&1; then
 fi
 
 echo "== waiting ${WAIT}s for server sessions to expire =="
-sleep "$WAIT"
+# Sleep in short steps so a stop (SIGTERM) is honoured within a second.
+waited=0
+while [ "$waited" -lt "$WAIT" ]; do
+    sleep 1
+    waited=$((waited + 1))
+done
 
 rm -f logs/world*.log logs/world*.start.log progress/*.txt rs2004-headless-w*.log
 
 for w in 1 2 3; do
+    trap 'echo "fleet.sh: cancelled"; exit 143' TERM INT
     echo "== world $w =="
     nohup sh start-world.sh "$w" 0 > "logs/world$w.start.log" 2>&1 &
     waited=0

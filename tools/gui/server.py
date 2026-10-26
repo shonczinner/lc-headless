@@ -9,7 +9,9 @@ import glob
 import json
 import os
 import shutil
+import signal
 import subprocess
+import threading
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -48,10 +50,12 @@ def script_options():
 
 
 HISTORY_PATH = os.path.join(STATUS_DIR, 'history.json')
-# Snapshot history kept per account: enough for a few days of 5-minute samples.
+# Snapshots kept per account session: enough for a few days of 5-minute samples.
 HISTORY_POINTS = 500
-# An XP/hr window uses at most this many recent samples, so a stale gap doesn't skew it.
-RATE_SAMPLES = 12
+# A rate needs at least two periodic reads this far apart; the client writes every 5 minutes.
+MIN_RATE_SECONDS = 4 * 60
+# An XP/hr window: consecutive scheduled reads, newest first, up to this many.
+RATE_SAMPLES = 18
 
 
 def _now_epoch():
@@ -66,14 +70,16 @@ def _parse_time(text):
 
 
 def _load_history():
+    """History v2: {account: {'loginCount': n, 'points': [{'t', 'xp'}]}}."""
     try:
         with open(HISTORY_PATH) as handle:
             data = json.load(handle)
-        if isinstance(data, dict):
-            return data
     except (OSError, ValueError):
-        pass
-    return {}
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    # Drop v1 entries ({account: [points]}), whose points came from forced writes.
+    return {name: entry for name, entry in data.items() if isinstance(entry, dict) and 'points' in entry}
 
 
 def _save_history(history):
@@ -86,57 +92,69 @@ def _save_history(history):
         pass
 
 
-def _record_history(history, account, xp_by_skill, stamp):
-    """Appends one snapshot per account per writtenAt, so repeated polls don't duplicate points."""
+def _record_history(history, account, stamp, scheduled):
+    """Appends one point per scheduled snapshot. Forced (lifecycle) writes and unscheduled polls are
+    ignored, because extrapolating a 30-second gap to an hour is meaningless."""
+    if not scheduled:
+        return
     name = account.get('name', '?')
-    points = history.setdefault(name, [])
+    login_count = account.get('loginCount', 0)
+    entry = history.get(name)
+    # A relogin starts a new session: old points would read as a rate across the break.
+    if entry is None or entry.get('loginCount') != login_count:
+        entry = {'loginCount': login_count, 'points': []}
+        history[name] = entry
+    points = entry['points']
     if points and points[-1].get('t') == stamp:
         return
-    points.append({'t': stamp, 'xp': xp_by_skill})
+    points.append({'t': stamp, 'xp': {k: v.get('xp', 0) for k, v in (account.get('skills') or {}).items()}})
     if len(points) > HISTORY_POINTS:
         del points[:len(points) - HISTORY_POINTS]
 
 
-def _xp_per_hour(points):
-    """XP/hr per skill over the last RATE_SAMPLES samples, compared with the oldest in the window.
+def _xp_per_hour(entry):
+    """XP/hr per skill over the session's scheduled reads.
 
-    Needs at least two samples; a fresh login starts again."""
+    Needs two scheduled reads at least MIN_RATE_SECONDS apart. The window runs from the first read of
+    the current gain run to the newest, so an idle stretch or a relogin (a rewind) can't distort it.
+    Empty until there's enough history."""
+    points = (entry or {}).get('points') or []
     if len(points) < 2:
         return {}
-    # Why: a relogin resets or rewinds XP (deaths, a different account state), so compare only the most
-    # recent run of samples where every skill is non-decreasing: a monotonic tail per account.
+
     last = points[-1]
-    end = last.get('xp', {})
-    in_window = points[-RATE_SAMPLES:] if len(points) > RATE_SAMPLES else points
-    first = None
-    for candidate in reversed(in_window[:-1]):
-        start = candidate.get('xp', {})
-        monotonic = all(end.get(skill, 0) >= start.get(skill, 0) for skill in end)
-        if monotonic:
-            first = candidate
-        else:
-            break
-    if first is None:
+    skills = last.get('xp', {})
+    min_span = MIN_RATE_SECONDS / 3600.0
+
+    # A rewind breaks the run; anything after the last rewind is one continuous session.
+    start_index = 0
+    for index in range(len(points) - 1):
+        before = points[index].get('xp', {})
+        after = points[index + 1].get('xp', {})
+        if any(after.get(skill, 0) < before.get(skill, 0) for skill in skills):
+            start_index = index + 1
+
+    window = points[start_index:][-RATE_SAMPLES:]
+    if len(window) < 2:
         return {}
 
-    # Skip trailing samples that show no gain, so time spent logged out or idle before the current
-    # burst doesn't water the rate down. The cut-off still has to be monotonic.
-    baseline = first
-    for candidate in in_window[:-1]:
-        if candidate['t'] <= first['t']:
-            continue
-        gain = any(end.get(skill, 0) > candidate.get('xp', {}).get(skill, 0) for skill in end)
-        if gain:
-            baseline = candidate
+    # Start at the first read of the latest gain run: a read before a flat stretch that only resumes
+    # later would average in the idle time.
+    first = window[0]
+    for index in range(len(window) - 1):
+        before = window[index].get('xp', {})
+        after = window[index + 1].get('xp', {})
+        if any(after.get(skill, 0) > before.get(skill, 0) for skill in skills):
+            first = window[index]
             break
-    first = baseline
 
+    last = window[-1]
     hours = (last['t'] - first['t']) / 3600.0
-    if hours <= 10 / 3600.0:
+    if hours < min_span:
         return {}
 
     rates = {}
-    for skill, xp in end.items():
+    for skill, xp in skills.items():
         gain = xp - first.get('xp', {}).get(skill, 0)
         if gain > 0:
             rates[skill] = round(gain / hours)
@@ -146,7 +164,8 @@ def _xp_per_hour(points):
 def read_status():
     """Merge every status file into one account list, newest write per account winning.
 
-    Also records the snapshot in status/history.json and adds each skill's xp/hr."""
+    Scheduled snapshots are recorded in status/history.json; each account gets xp/hr per skill once two
+    scheduled reads exist."""
     accounts = {}
     worlds = {}
     history = _load_history()
@@ -162,15 +181,16 @@ def read_status():
             continue
         world = data.get('world', '?')
         written = data.get('writtenAt', '')
+        scheduled = bool(data.get('scheduled', False))
         stamp = _parse_time(written) or _now_epoch()
-        worlds[os.path.basename(path)] = {'writtenAt': written, 'world': world, 'accounts': len(data.get('accounts', []))}
+        worlds[os.path.basename(path)] = {'writtenAt': written, 'world': world, 'scheduled': scheduled,
+                                          'accounts': len(data.get('accounts', []))}
         for account in data.get('accounts', []):
             entry = dict(account)
             entry['world'] = world
             entry['writtenAt'] = written
-            skills = entry.get('skills') or {}
-            _record_history(history, entry, {name: skill.get('xp', 0) for name, skill in skills.items()}, stamp)
-            recorded = True
+            _record_history(history, entry, stamp, scheduled)
+            recorded = scheduled or recorded
             accounts[entry.get('name', '?')] = entry
 
     if recorded:
@@ -179,7 +199,11 @@ def read_status():
     merged = []
     for name in sorted(accounts, key=lambda n: (len(n), n)):
         entry = accounts[name]
-        entry['xpPerHour'] = _xp_per_hour(history.get(name, []))
+        session = history.get(name)
+        if session is not None and session.get('loginCount') != entry.get('loginCount', 0):
+            session = None
+        entry['xpPerHour'] = _xp_per_hour(session)
+        entry['ratePoints'] = len((session or {}).get('points') or [])
         merged.append(entry)
     return {'accounts': merged, 'files': worlds}
 
@@ -240,14 +264,93 @@ def apply_script(script_file, settings):
     return updated
 
 
-def run(cmd, log_name):
+START_LOG = os.path.join(LOGS_DIR, 'gui-fleet.log')
+
+# idle -> starting -> running; stopping from any state. The lock keeps one transition at a time.
+STATE_LOCK = threading.Lock()
+STATE = {'status': 'idle', 'since': time.time(), 'startPid': None, 'detail': ''}
+
+
+def _set_state(status, detail=''):
+    STATE['status'] = status
+    STATE['since'] = time.time()
+    STATE['detail'] = detail
+
+
+def _kill_group(pid, timeout=5.0):
+    """SIGTERM a process group, then SIGKILL whatever survives; returns True when nothing is left."""
+    if not pid:
+        return True
+    for sig, wait in ((signal.SIGTERM, timeout), (signal.SIGKILL, 1.0)):
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            pass
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            try:
+                os.killpg(pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.1)
+    return False
+
+
+def _clients():
+    result = subprocess.run(['pgrep', '-f', 'Rs2004Headless'], capture_output=True, text=True)
+    return [int(p) for p in result.stdout.split() if p.isdigit()]
+
+
+def _start_fleet(script_file, settings):
     os.makedirs(LOGS_DIR, exist_ok=True)
-    log_path = os.path.join(LOGS_DIR, log_name)
-    with open(log_path, 'ab') as handle:
-        # A fleet restart may kill our own process group, so detach into a new session.
-        subprocess.Popen(cmd, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=handle, stderr=subprocess.STDOUT,
-                         start_new_session=True)
-    return log_path
+    updated = apply_script(script_file, settings)
+    with STATE_LOCK:
+        if STATE['status'] in ('starting', 'stopping'):
+            return 409, {'error': f"busy: {STATE['status']}; stop first", 'state': STATE['status']}
+        _set_state('starting', f'{script_file} on {updated} accounts')
+        with open(START_LOG, 'ab') as handle:
+            # start_new_session: fleet.sh, its start-world.sh children and the clients share one group,
+            # so Stop can end the whole start at once.
+            process = subprocess.Popen(['sh', 'fleet.sh'], cwd=ROOT, stdin=subprocess.DEVNULL,
+                                       stdout=handle, stderr=subprocess.STDOUT,
+                                       start_new_session=True)
+        STATE['startPid'] = os.getpgid(process.pid)
+        threading.Thread(target=_watch_start, args=(process,), daemon=True).start()
+    return 200, {'accounts': updated, 'script': script_file, 'state': 'starting', 'pid': process.pid}
+
+
+def _watch_start(process):
+    process.wait()
+    with STATE_LOCK:
+        if STATE['status'] == 'starting':
+            _set_state('running' if _clients() else 'idle', f'fleet.sh exited {process.returncode}')
+
+
+def _stop_fleet():
+    with STATE_LOCK:
+        was = STATE['status']
+        _set_state('stopping', f'was {was}')
+        # Kill the start process group first: fleet.sh, start-world.sh and anything they spawned.
+        start_pid = STATE['startPid']
+        STATE['startPid'] = None
+        _kill_group(start_pid, timeout=3.0)
+        # Fleet scripts are launched with start_new_session, so their own groups need hunting down.
+        subprocess.run(['pkill', '-TERM', '-f', r'[s]h fleet\.sh'], capture_output=True)
+        subprocess.run(['pkill', '-TERM', '-f', r'[s]tart-world\.sh'], capture_output=True)
+        subprocess.run(['sh', 'stop.sh'], cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True)
+    time.sleep(2)
+    # Whatever is left after the graceful logout.
+    for _ in range(3):
+        remaining = _clients()
+        if not remaining:
+            break
+        subprocess.run(['pkill', '-KILL', '-f', 'Rs2004Headless'], capture_output=True)
+        time.sleep(1)
+    with STATE_LOCK:
+        _set_state('idle' if not _clients() else 'stopping', 'stop requested')
+    return 200, {'state': 'idle' if not _clients() else 'stopping', 'remaining': len(_clients())}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -273,7 +376,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/api/scripts':
             self._send(200, {'options': script_options()})
         elif path == '/api/fleet':
-            self._send(200, fleet_state())
+            state = fleet_state()
+            state['state'] = STATE['status']
+            state['detail'] = STATE['detail']
+            self._send(200, state)
         elif path == '/api/log':
             try:
                 with open(os.path.join(LOGS_DIR, 'world1.log'), 'rb') as handle:
@@ -296,16 +402,11 @@ class Handler(BaseHTTPRequestHandler):
             if not script_file:
                 self._send(400, {'error': 'no script'})
                 return
-            updated = apply_script(script_file, settings)
-            run(['sh', 'stop.sh'], 'gui-fleet.log')
-            time.sleep(2)
-            log = run(['sh', 'fleet.sh'], 'gui-fleet.log')
-            self._send(200, {'accounts': updated, 'script': script_file, 'log': log, 'state': 'starting'})
+            code, payload = _start_fleet(script_file, settings)
+            self._send(code, payload)
         elif path == '/api/stop':
-            subprocess.run(['sh', 'stop.sh'], cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True)
-            time.sleep(2)
-            subprocess.run(['pkill', '-9', '-f', 'Rs2004Headless'], stdin=subprocess.DEVNULL, capture_output=True)
-            self._send(200, {'state': 'stopped'})
+            code, payload = _stop_fleet()
+            self._send(code, payload)
         else:
             self._send(404, {'error': 'not found'})
 

@@ -88,8 +88,9 @@ void StatusWriter::Step(Clock::time_point now, const std::vector<std::unique_ptr
 
     auto json = std::string{};
     json.reserve(accounts.size() * 512 + 128);
-    std::format_to(std::back_inserter(json), "{{\n  \"world\": \"{}\",\n  \"writtenAt\": \"{}\",\n  \"accounts\": [\n",
-                   Escape(m_world), std::format("{:%Y-%m-%dT%H:%M:%SZ}", std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())));
+    std::format_to(std::back_inserter(json), "{{\n  \"world\": \"{}\",\n  \"writtenAt\": \"{}\",\n  \"scheduled\": {},\n  \"accounts\": [\n",
+                   Escape(m_world), std::format("{:%Y-%m-%dT%H:%M:%SZ}", std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())),
+                   force ? "false" : "true");
 
     auto signature = std::string{};
     auto first = true;
@@ -113,10 +114,11 @@ void StatusWriter::Step(Clock::time_point now, const std::vector<std::unique_ptr
         std::format_to(std::back_inserter(json),
                        "    {{\n      \"name\": \"{}\",\n      \"username\": \"{}\",\n      \"script\": \"{}\",\n"
                        "      \"state\": \"{}\",\n      \"status\": \"{}\",\n      \"placed\": {},\n"
-                       "      \"tile\": {{\"x\": {}, \"z\": {}, \"level\": {}}},\n"
+                       "      \"loginCount\": {},\n      \"tile\": {{\"x\": {}, \"z\": {}, \"level\": {}}},\n"
                        "      \"hp\": {},\n      \"maxHp\": {},\n      \"run\": {},\n      \"skills\": {{",
                        Escape(account.GetName()), Escape(account.GetUsername()), Escape(script),
                        ClientStateName(status), Escape(account.DescribeStatus()), inGame,
+                       client.GetLoginCount(),
                        tile.x, tile.z, tile.level,
                        state.localPlayer.hits.empty() ? 0 : static_cast<int>(state.localPlayer.hits.back().health),
                        state.localPlayer.hits.empty() ? 0 : static_cast<int>(state.localPlayer.hits.back().maxHealth),

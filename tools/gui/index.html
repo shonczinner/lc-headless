@@ -115,13 +115,21 @@ async function loadStatus() {
   render();
 }
 
+let lastState = 'idle';
+
 async function loadFleet() {
   try {
     const fleet = await getJSON('/api/fleet');
-    if (fleet.starting) pill($('fleet'), 'starting…', '');
+    const state = fleet.state || 'idle';
+    lastState = state;
+    if (state === 'starting') pill($('fleet'), 'starting… (safe to stop)', '');
+    else if (state === 'stopping') pill($('fleet'), 'stopping…', '');
     else if (fleet.running) pill($('fleet'), `${fleet.worlds} worlds running`, 'on');
     else pill($('fleet'), 'stopped', 'off');
-    $('stop').disabled = !fleet.running && !fleet.starting;
+    if (fleet.detail) $('msg').textContent = fleet.detail;
+    // Stop must always be available unless already stopping.
+    $('stop').disabled = state === 'stopping';
+    $('start').disabled = state === 'starting';
   } catch (e) {
     pill($('fleet'), 'unknown', '');
   }
@@ -195,16 +203,32 @@ async function start() {
     $('msg').textContent = `start failed: ${e.message}`;
   } finally {
     $('start').disabled = false;
-    setTimeout(() => { loadFleet(); loadStatus(); }, 1500);
+    watchTransition();
   }
+}
+
+// Poll quickly through a start/stop, then fall back to the slow refresh.
+function watchTransition() {
+  let ticks = 0;
+  const timer = setInterval(async () => {
+    await loadFleet();
+    ticks++;
+    if ((lastState === 'idle' || lastState === 'running') || ticks > 120) {
+      clearInterval(timer);
+      loadStatus();
+    }
+  }, 5000);
 }
 
 async function stop() {
   $('stop').disabled = true;
   $('msg').textContent = 'stopping…';
-  try { await getJSON('/api/stop', { method: 'POST', body: '{}' }); $('msg').textContent = 'stopped'; }
-  catch (e) { $('msg').textContent = `stop failed: ${e.message}`; }
-  setTimeout(() => { loadFleet(); loadStatus(); }, 1500);
+  try {
+    const result = await getJSON('/api/stop', { method: 'POST', body: '{}' });
+    $('msg').textContent = result.remaining ? `stopping (${result.remaining} left)` : 'stopped';
+  } catch (e) { $('msg').textContent = `stop failed: ${e.message}`; }
+  loadFleet();
+  watchTransition();
 }
 
 async function toggleLog() {
