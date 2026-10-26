@@ -309,7 +309,8 @@ class _RandomEvents:
             acted = yield from self._handle(event, say)
         except Exception as e:
             self.handling = False
-            raise e
+            say(f'random event: {event.name} failed: {e}')
+            return False
         self.handling = False
         return acted
 
