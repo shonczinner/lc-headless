@@ -5,3 +5,6 @@ accounts/*.jsonc
 /progress/
 /data/cache/
 *.log
+accounts_w*/
+__pycache__/
+*.pyc
