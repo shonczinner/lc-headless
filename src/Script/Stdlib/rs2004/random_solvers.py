@@ -205,7 +205,12 @@ def rub_lamp(skill, log):
         return False
     _core.click_component(_lamp_button(skill))
     yield from execution.delay_ticks(1)
-    _core.click_text('Confirm', _core.get_main_modal())
+    # The modal can race open/closed; click_text rejects -1, so fall back to all open roots.
+    root = _core.get_main_modal()
+    if root >= 0:
+        _core.click_text('Confirm', root)
+    else:
+        _core.click_text('Confirm')
     used = yield from execution.delay_until(lambda: not inventory.contains('Lamp'), 4000)
     log(f'random event: rubbed the lamp for {skill}' if used else 'random event: the lamp was not used')
     return True
