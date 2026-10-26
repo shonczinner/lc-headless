@@ -5,3 +5,5 @@ accounts/*.jsonc
 /progress/
 /data/cache/
 *.log
+status/
+bank/

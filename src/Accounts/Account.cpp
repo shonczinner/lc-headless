@@ -33,6 +33,13 @@ Account::Account(std::shared_ptr<const Config_s> config, std::shared_ptr<const G
     , m_client{m_config, std::move(cache), m_account.credentials, m_logger, m_options.client, std::move(net)}
     , m_progress{m_account.script ? m_account.script->progressReportMinutes : std::chrono::minutes{0}, std::filesystem::path{m_config->scripting.progressDirectory} / (m_account.name + PROGRESS_EXTENSION), m_logger}
 {
+    if (!m_config->scripting.bankLogDirectory.empty())
+    {
+        // The bank is the cache's, so this needs no script and works for every bot.
+        m_bankLog.emplace(m_client.GetCache(), m_logger, m_account.name, m_config->server.host,
+                          std::filesystem::path{m_config->scripting.bankLogDirectory});
+    }
+
     if (m_account.script)
     {
         const auto& scripting = m_config->scripting;
@@ -180,6 +187,11 @@ void Account::Step(std::chrono::milliseconds maxWait)
         else if (status == ClientStatus_e::InGame)
         {
             StepIdle(now);
+        }
+
+        if (m_bankLog && status == ClientStatus_e::InGame)
+        {
+            m_bankLog->Step(m_client.GetState());
         }
 
         if (!m_finished && m_killDeadline && now >= *m_killDeadline)

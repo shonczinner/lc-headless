@@ -103,7 +103,8 @@ namespace
         "reloginDelaySeconds": 60,
         "progressDirectory": "progress",
         "statusDirectory": "status",
-        "statusName": ""
+        "statusName": "",
+        "bankLogDirectory": "bank"
     }
 }
 )json"sv;

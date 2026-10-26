@@ -44,6 +44,9 @@
         // such as tools/gui. "" turns it off.
         "statusDirectory": "status",
         // The status file's name; "" uses the stem of client.logFile, or "client" without one.
-        "statusName": ""
+        "statusName": "",
+        // Where a bank's contents are logged each time one opens: bank/<account>.jsonl and .json.
+        // "" turns it off.
+        "bankLogDirectory": "bank"
     }
 }

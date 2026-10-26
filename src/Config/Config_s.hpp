@@ -44,6 +44,8 @@ struct ScriptingSettings_s
     // The name of that file, so a world's file doesn't collide with another's. Defaults to the stem of
     // client.logFile, or "client" without one.
     std::string statusName;
+    // Where a bank's contents are logged when one opens: bank/<account>.json and .jsonl. Empty turns it off.
+    std::string bankLogDirectory = "bank";
 };
 
 // client.jsonc.
