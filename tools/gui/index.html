@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>lc-headless fleet</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: #14161a; color: #d8dee9; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 18px; background: #1b1f27; border-bottom: 1px solid #2a303c; flex-wrap: wrap; }
+  h1 { font-size: 15px; margin: 0 12px 0 0; font-weight: 600; letter-spacing: .02em; }
+  button { background: #2b3442; color: #d8dee9; border: 1px solid #3b4657; border-radius: 6px; padding: 6px 14px; cursor: pointer; font: inherit; }
+  button:hover { background: #364152; }
+  button.primary { background: #2f6f4f; border-color: #3c8a63; }
+  button.danger { background: #6f2f2f; border-color: #8a3c3c; }
+  button:disabled { opacity: .5; cursor: default; }
+  select { background: #1b1f27; color: #d8dee9; border: 1px solid #3b4657; border-radius: 6px; padding: 6px 8px; font: inherit; }
+  main { padding: 14px 18px 30px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .pill { padding: 3px 10px; border-radius: 999px; background: #232a35; border: 1px solid #313a48; font-size: 12px; }
+  .pill.on { background: #1f4634; border-color: #2f6f4f; }
+  .pill.off { background: #4a2626; border-color: #6f2f2f; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #232a35; white-space: nowrap; }
+  th { position: sticky; top: 0; background: #1b1f27; font-weight: 600; font-size: 12px; color: #9aa4b2; }
+  td.num, th.num { text-align: right; }
+  tr.idle td { color: #6b7482; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .card { background: #1b1f27; border: 1px solid #2a303c; border-radius: 8px; padding: 8px 10px; }
+  .card .k { font-size: 11px; color: #8b95a3; text-transform: uppercase; letter-spacing: .04em; }
+  .card .v { font-size: 18px; font-weight: 600; }
+  #log { background: #0f1115; border: 1px solid #2a303c; border-radius: 8px; padding: 10px; height: 260px; overflow: auto; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; }
+  #msg { color: #9aa4b2; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>lc-headless fleet</h1>
+  <span id="fleet" class="pill">…</span>
+  <span id="stamp" class="pill">…</span>
+  <span style="flex:1"></span>
+  <button id="refresh">Refresh</button>
+  <button id="stop" class="danger">Stop</button>
+</header>
+
+<main>
+  <div class="row">
+    <label for="script">Script</label>
+    <select id="script" style="min-width:340px"></select>
+    <button id="start" class="primary">Start all accounts</button>
+    <span id="msg"></span>
+  </div>
+
+  <div class="row">
+    <label for="skill">Skill</label>
+    <select id="skill"></select>
+    <span id="summary" class="pill"></span>
+  </div>
+
+  <div class="grid" id="cards"></div>
+  <div style="height:14px"></div>
+
+  <table>
+    <thead>
+      <tr><th>Account</th><th class="num">Level</th><th class="num">Base</th><th class="num">XP</th><th>State</th><th>Script</th><th>Tile</th><th class="num">HP</th><th class="num">Run</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <div class="row" style="margin-top:16px">
+    <button id="logbtn">Show world 1 log</button>
+  </div>
+  <div id="log" hidden></div>
+</main>
+
+<script>
+const SKILLS = ['attack','defence','strength','hitpoints','ranged','prayer','magic','cooking','woodcutting',
+                'fletching','fishing','firemaking','crafting','smithing','mining','herblore','agility','thieving','runecraft'];
+const REFRESH_MS = 5 * 60 * 1000;
+let status = { accounts: [] };
+let scripts = [];
+let skill = localStorage.getItem('fleet.skill') || 'thieving';
+
+const $ = id => document.getElementById(id);
+
+function pill(el, text, cls) { el.textContent = text; el.className = 'pill ' + (cls || ''); }
+
+async function getJSON(url, opts) {
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  return res.json();
+}
+
+async function loadScripts() {
+  const data = await getJSON('/api/scripts');
+  scripts = data.options;
+  const select = $('script');
+  select.innerHTML = '';
+  for (const option of scripts) {
+    const el = document.createElement('option');
+    el.value = option.file;
+    el.textContent = option.label;
+    select.appendChild(el);
+  }
+  const saved = localStorage.getItem('fleet.script');
+  if (saved && scripts.some(o => o.file === saved)) select.value = saved;
+  select.onchange = () => localStorage.setItem('fleet.script', select.value);
+}
+
+async function loadStatus() {
+  try {
+    status = await getJSON('/api/status');
+  } catch (e) {
+    status = { accounts: [] };
+  }
+  render();
+}
+
+async function loadFleet() {
+  try {
+    const fleet = await getJSON('/api/fleet');
+    if (fleet.starting) pill($('fleet'), 'starting…', '');
+    else if (fleet.running) pill($('fleet'), `${fleet.worlds} worlds running`, 'on');
+    else pill($('fleet'), 'stopped', 'off');
+    $('stop').disabled = !fleet.running && !fleet.starting;
+  } catch (e) {
+    pill($('fleet'), 'unknown', '');
+  }
+}
+
+function accounts() { return status.accounts || []; }
+
+function render() {
+  const list = accounts();
+  const level = a => a.skills?.[skill]?.level ?? 0;
+  const xp = a => a.skills?.[skill]?.xp ?? 0;
+
+  const stamp = status.files ? Object.values(status.files).map(f => f.writtenAt).sort().pop() : null;
+  $('stamp').textContent = stamp ? `updated ${stamp.replace('T', ' ').replace('Z', '')}` : 'no status yet';
+
+  const ready = list.filter(a => a.state === 'ingame');
+  const at5 = list.filter(a => level(a) >= 5).length;
+  const total = list.length;
+  const avg = total ? (list.reduce((sum, a) => sum + level(a), 0) / total).toFixed(1) : '-';
+  $('summary').textContent = `${at5}/${total} at ${skill} 5+ · avg ${avg} · ${ready.length} in game`;
+
+  const cards = $('cards');
+  cards.innerHTML = '';
+  for (const [label, value] of [
+    ['accounts', total], [`at ${skill} 5+`, `${at5}/${total}`],
+    [`best ${skill}`, total ? Math.max(...list.map(level)) : '-'],
+    ['in game', ready.length]]) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `<div class="k">${label}</div><div class="v">${value}</div>`;
+    cards.appendChild(card);
+  }
+
+  const rows = $('rows');
+  rows.innerHTML = '';
+  const sorted = [...list].sort((a, b) => level(b) - level(a) || a.name.localeCompare(b.name));
+  for (const a of sorted) {
+    const tr = document.createElement('tr');
+    const s = a.skills?.[skill] || {};
+    const tile = a.tile && a.state === 'ingame' ? `${a.tile.x},${a.tile.z}` : '';
+    tr.className = a.state === 'ingame' ? '' : 'idle';
+    tr.innerHTML = `<td>${a.name}</td><td class="num">${s.level ?? '-'}</td><td class="num">${s.base ?? '-'}</td>`
+      + `<td class="num">${s.xp ?? '-'}</td><td>${a.state ?? ''}</td><td>${(a.script || '').replace(/^bots\//, '')}</td>`
+      + `<td>${tile}</td><td class="num">${a.maxHp ? `${a.hp}/${a.maxHp}` : ''}</td><td class="num">${a.run ?? ''}</td>`;
+    rows.appendChild(tr);
+  }
+}
+
+async function start() {
+  const file = $('script').value;
+  const option = scripts.find(o => o.file === file) || { settings: {} };
+  $('start').disabled = true;
+  $('msg').textContent = `applying ${file} to every account and starting (waits ~2 min for sessions)…`;
+  try {
+    const result = await getJSON('/api/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file, settings: option.settings })
+    });
+    $('msg').textContent = `${result.accounts} accounts set to ${file}; starting`;
+  } catch (e) {
+    $('msg').textContent = `start failed: ${e.message}`;
+  } finally {
+    $('start').disabled = false;
+    setTimeout(() => { loadFleet(); loadStatus(); }, 1500);
+  }
+}
+
+async function stop() {
+  $('stop').disabled = true;
+  $('msg').textContent = 'stopping…';
+  try { await getJSON('/api/stop', { method: 'POST', body: '{}' }); $('msg').textContent = 'stopped'; }
+  catch (e) { $('msg').textContent = `stop failed: ${e.message}`; }
+  setTimeout(() => { loadFleet(); loadStatus(); }, 1500);
+}
+
+async function toggleLog() {
+  const el = $('log');
+  el.hidden = !el.hidden;
+  if (el.hidden) return;
+  try { const data = await getJSON('/api/log'); el.textContent = data.text; el.scrollTop = el.scrollHeight; }
+  catch (e) { el.textContent = `log failed: ${e.message}`; }
+}
+
+$('skill').innerHTML = SKILLS.map(s => `<option value="${s}">${s[0].toUpperCase() + s.slice(1)}</option>`).join('');
+$('skill').value = skill;
+$('skill').onchange = () => { skill = $('skill').value; localStorage.setItem('fleet.skill', skill); render(); };
+$('refresh').onclick = () => { loadFleet(); loadStatus(); };
+$('start').onclick = start;
+$('stop').onclick = stop;
+$('logbtn').onclick = toggleLog;
+
+loadScripts();
+loadFleet();
+loadStatus();
+setInterval(() => { loadFleet(); loadStatus(); }, REFRESH_MS);
+</script>
+</body>
+</html>

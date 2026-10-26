@@ -8,3 +8,4 @@ accounts/*.jsonc
 accounts_w*/
 __pycache__/
 *.pyc
+status/

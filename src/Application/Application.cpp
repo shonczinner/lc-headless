@@ -61,7 +61,7 @@ int Application::Run()
         .navigation = m_navigation,
         .reloginDelay = scripting.reloginDelaySeconds,
     };
-    auto runner = AccountRunner{m_config, m_cache, LoadAccounts(), runtime, m_logger, options};
+    auto runner = AccountRunner{m_config, m_commandLine.configPath.string(), m_cache, LoadAccounts(), runtime, m_logger, options};
 
     if (m_commandLine.watch)
     {

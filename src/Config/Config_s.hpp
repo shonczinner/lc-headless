@@ -38,6 +38,8 @@ struct ScriptingSettings_s
     s32 connectAttempts = 10;
     std::chrono::seconds reloginDelaySeconds = 60s;
     std::string progressDirectory = "progress";
+    // Where the C++ client writes status/<world>.json for the GUI; empty turns it off.
+    std::string statusDirectory = "status";
 };
 
 // client.jsonc.

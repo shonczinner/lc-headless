@@ -24,14 +24,26 @@ namespace
 
 }
 
-AccountRunner::AccountRunner(std::shared_ptr<const Config_s> config, std::shared_ptr<const GameCache_s> cache, std::vector<AccountConfig_s> accounts, ScriptRuntime& runtime, std::shared_ptr<Logger> logger, AccountOptions_s options)
+AccountRunner::AccountRunner(std::shared_ptr<const Config_s> config, std::string configPath, std::shared_ptr<const GameCache_s> cache, std::vector<AccountConfig_s> accounts, ScriptRuntime& runtime, std::shared_ptr<Logger> logger, AccountOptions_s options)
     : m_config{std::move(config)}
+    , m_configPath{std::move(configPath)}
     , m_cache{std::move(cache)}
     , m_logger{std::move(logger)}
     , m_loginQueue{std::make_shared<LoginQueue>(m_config->scripting.loginIntervalSeconds)}
     , m_commands{m_accounts, *m_logger}
 {
     assert(m_cache && "AccountRunner needs a cache");
+
+    // Status for the GUI, named after the client config: client_w1.jsonc -> status/client_w1.json.
+    if (!m_config->scripting.statusDirectory.empty())
+    {
+        auto stem = std::filesystem::path{m_configPath}.stem().string();
+        if (stem.empty())
+        {
+            stem = "client";
+        }
+        m_status.emplace(std::filesystem::path{m_config->scripting.statusDirectory} / (stem + ".json"), m_config->server.host);
+    }
 
     options.client.loginQueue = m_loginQueue;
     for (auto& account : accounts)
@@ -93,6 +105,8 @@ bool AccountRunner::Run(const InterruptCount& interrupts, ConsoleInput* console)
         {
             break;
         }
+
+        WriteStatus();
 
         Wait(now);
     }
@@ -248,6 +262,26 @@ void AccountRunner::Wait(Clock::time_point now) const
 
     // Wakes early for any account's I/O, and for a console line through SetOnArrived.
     m_net->Wait(wake);
+}
+
+void AccountRunner::WriteStatus()
+{
+    if (!m_status)
+    {
+        return;
+    }
+
+    // A login, a script change or a logout should show up at once, not on the next interval.
+    auto signature = std::string{};
+    for (const auto& account : m_accounts)
+    {
+        const auto& client = account->GetClient();
+        std::format_to(std::back_inserter(signature), "{}:{}:{}|", account->GetName(), static_cast<int>(client.GetStatus()), account->GetScriptFile());
+    }
+
+    const auto force = signature != m_statusSignature;
+    m_statusSignature = std::move(signature);
+    m_status->Step(Clock::now(), m_accounts, force);
 }
 
 bool AccountRunner::LogOutcomes() const

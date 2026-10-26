@@ -12,6 +12,7 @@
 #include "../Script/ScriptRuntime.hpp"
 #include "Account.hpp"
 #include "AccountCommands.hpp"
+#include "StatusWriter.hpp"
 
 // Every account's script loads on construction, so a broken script stops everything before the first login.
 class AccountRunner
@@ -21,7 +22,7 @@ public:
     // Ctrl+C presses so far; each new one interrupts every account.
     using InterruptCount = std::function<u32()>;
 
-    AccountRunner(std::shared_ptr<const Config_s> config, std::shared_ptr<const GameCache_s> cache, std::vector<AccountConfig_s> accounts, ScriptRuntime& runtime, std::shared_ptr<Logger> logger = Logger::GetDefault(), AccountOptions_s options = {});
+    AccountRunner(std::shared_ptr<const Config_s> config, std::string configPath, std::shared_ptr<const GameCache_s> cache, std::vector<AccountConfig_s> accounts, ScriptRuntime& runtime, std::shared_ptr<Logger> logger = Logger::GetDefault(), AccountOptions_s options = {});
 
     AccountRunner(const AccountRunner&) = delete;
     AccountRunner& operator=(const AccountRunner&) = delete;
@@ -35,6 +36,8 @@ public:
 
     [[nodiscard]] std::size_t GetAccountCount() const;
     [[nodiscard]] const Account& GetAccount(std::size_t index) const;
+    // Forces a status write, so the GUI sees a lifecycle change at once.
+    void WriteStatus();
 
 private:
     void StartNextLogin(Clock::time_point now);
@@ -44,6 +47,8 @@ private:
     [[nodiscard]] bool LogOutcomes() const;
 
     std::shared_ptr<const Config_s> m_config;
+    // The client.jsonc name the status file is named after.
+    std::string m_configPath;
     std::shared_ptr<const GameCache_s> m_cache;
     std::shared_ptr<Logger> m_logger;
     // Every account's connection runs on it, so a packet for any of them wakes the runner.
@@ -60,4 +65,8 @@ private:
     std::optional<Clock::time_point> m_nextLogin;
     // Accounts quit from the console before their turn, which never log in.
     std::unordered_set<const Account*> m_cancelled;
+    // status/<client file>.json, for the GUI. Disabled when scripting.statusDirectory is empty.
+    std::optional<StatusWriter> m_status;
+    // The lifecycle signature last written, so a change forces a write.
+    std::string m_statusSignature;
 };

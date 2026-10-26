@@ -289,6 +289,11 @@ std::string_view Account::DescribeOutcome() const
     return m_client.GetStatus() == ClientStatus_e::LoggedOut ? "logged out" : "disconnected without a confirmed logout";
 }
 
+std::string_view Account::GetScriptFile() const
+{
+    return m_account.script ? std::string_view{m_account.script->file} : std::string_view{};
+}
+
 std::string Account::DescribeStatus() const
 {
     if (!m_started)

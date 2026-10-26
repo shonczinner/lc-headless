@@ -68,6 +68,8 @@ public:
     [[nodiscard]] const std::string& GetName() const;
     [[nodiscard]] const std::string& GetUsername() const;
     [[nodiscard]] const GameClient& GetClient() const;
+    // The account file's script path, or empty without one.
+    [[nodiscard]] std::string_view GetScriptFile() const;
 
 private:
     [[nodiscard]] std::chrono::milliseconds GetWait(std::chrono::milliseconds maxWait) const;
