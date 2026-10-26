@@ -38,11 +38,14 @@
   <span id="fleet" class="pill">…</span>
   <span id="stamp" class="pill">…</span>
   <span style="flex:1"></span>
+  <button id="tab-fleet" class="primary">Fleet</button>
+  <button id="tab-bank">Bank</button>
   <button id="refresh">Refresh</button>
   <button id="stop" class="danger">Stop</button>
 </header>
 
 <main>
+<div id="view-fleet">
   <div class="row">
     <label for="script">Script</label>
     <select id="script" style="min-width:340px"></select>
@@ -70,6 +73,21 @@
     <button id="logbtn">Show world 1 log</button>
   </div>
   <div id="log" hidden></div>
+</div>
+
+<div id="view-bank" hidden>
+  <div class="row">
+    <span id="banksum" class="pill">…</span>
+    <input id="bankfilter" placeholder="filter by name or id" style="background:#1b1f27;color:#d8dee9;border:1px solid #3b4657;border-radius:6px;padding:6px 8px;font:inherit;min-width:240px">
+    <span id="bankmsg" style="color:#9aa4b2;font-size:12px"></span>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Item</th><th class="num">ID</th><th class="num">Total qty</th><th class="num">Accounts</th><th>Held by</th></tr>
+    </thead>
+    <tbody id="bankrows"></tbody>
+  </table>
+</div>
 </main>
 
 <script>
@@ -242,14 +260,60 @@ async function toggleLog() {
 $('skill').innerHTML = SKILLS.map(s => `<option value="${s}">${s[0].toUpperCase() + s.slice(1)}</option>`).join('');
 $('skill').value = skill;
 $('skill').onchange = () => { skill = $('skill').value; localStorage.setItem('fleet.skill', skill); render(); };
-$('refresh').onclick = () => { loadFleet(); loadStatus(); };
+$('refresh').onclick = () => { loadFleet(); loadStatus(); loadBank(); };
 $('start').onclick = start;
 $('stop').onclick = stop;
 $('logbtn').onclick = toggleLog;
 
+let view = 'fleet';
+let bank = { items: [], accounts: 0 };
+
+async function loadBank() {
+  try { bank = await getJSON('/api/bank'); } catch (e) { bank = { items: [], accounts: 0 }; }
+  renderBank();
+}
+
+function renderBank() {
+  const filter = ($('bankfilter').value || '').trim().toLowerCase();
+  const items = (bank.items || []).filter(i =>
+    !filter || (i.name || '').toLowerCase().includes(filter) || String(i.id) === filter);
+  const totalQty = items.reduce((sum, i) => sum + (i.qty || 0), 0);
+  $('banksum').textContent = `${items.length} item kinds · ${totalQty.toLocaleString()} total · ${bank.accounts || 0} accounts with a bank snapshot`;
+  $('bankmsg').textContent = bank.updatedAt ? `as of ${bank.updatedAt.replace('T', ' ').replace('Z', '')}` : '';
+  const rows = $('bankrows');
+  rows.innerHTML = '';
+  for (const item of items.slice(0, 500)) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${item.name || '(unknown)'}</td><td class="num">${item.id}</td>`
+      + `<td class="num">${(item.qty || 0).toLocaleString()}</td>`
+      + `<td class="num">${item.accountCount ?? (item.accounts || []).length}</td>`
+      + `<td>${(item.accounts || []).join(', ')}</td>`;
+    rows.appendChild(tr);
+  }
+  if (items.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="5" style="color:#8b95a3">no bank snapshots yet — they are written when a bot opens a bank</td>';
+    rows.appendChild(tr);
+  }
+}
+
+function showView(next) {
+  view = next;
+  $('view-fleet').hidden = next !== 'fleet';
+  $('view-bank').hidden = next !== 'bank';
+  $('tab-fleet').className = next === 'fleet' ? 'primary' : '';
+  $('tab-bank').className = next === 'bank' ? 'primary' : '';
+  if (next === 'bank') loadBank();
+}
+
+$('tab-fleet').onclick = () => showView('fleet');
+$('tab-bank').onclick = () => showView('bank');
+$('bankfilter').oninput = renderBank;
+
 loadScripts();
 loadFleet();
 loadStatus();
+loadBank();
 setInterval(() => { loadFleet(); loadStatus(); }, REFRESH_MS);
 </script>
 </body>
