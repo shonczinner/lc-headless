@@ -61,7 +61,7 @@
 
   <table>
     <thead>
-      <tr><th>Account</th><th class="num">Level</th><th class="num">Base</th><th class="num">XP</th><th>State</th><th>Script</th><th>Tile</th><th class="num">HP</th><th class="num">Run</th></tr>
+      <tr><th>Account</th><th class="num">Level</th><th class="num">Base</th><th class="num">XP</th><th class="num">XP/hr</th><th>State</th><th>Script</th><th>Tile</th><th class="num">HP</th><th class="num">Run</th></tr>
     </thead>
     <tbody id="rows"></tbody>
   </table>
@@ -129,6 +129,12 @@ async function loadFleet() {
 
 function accounts() { return status.accounts || []; }
 
+function fmtRate(rate) {
+  if (rate >= 1000000) return `${(rate / 1000000).toFixed(1)}M`;
+  if (rate >= 1000) return `${(rate / 1000).toFixed(1)}k`;
+  return String(rate);
+}
+
 function render() {
   const list = accounts();
   const level = a => a.skills?.[skill]?.level ?? 0;
@@ -141,7 +147,9 @@ function render() {
   const at5 = list.filter(a => level(a) >= 5).length;
   const total = list.length;
   const avg = total ? (list.reduce((sum, a) => sum + level(a), 0) / total).toFixed(1) : '-';
-  $('summary').textContent = `${at5}/${total} at ${skill} 5+ · avg ${avg} · ${ready.length} in game`;
+  const fleetRate = list.reduce((sum, a) => sum + (a.xpPerHour?.[skill] || 0), 0);
+  const rateText = fleetRate > 0 ? ` · ${fmtRate(fleetRate)} xp/hr` : '';
+  $('summary').textContent = `${at5}/${total} at ${skill} 5+ · avg ${avg}${rateText} · ${ready.length} in game`;
 
   const cards = $('cards');
   cards.innerHTML = '';
@@ -163,8 +171,10 @@ function render() {
     const s = a.skills?.[skill] || {};
     const tile = a.tile && a.state === 'ingame' ? `${a.tile.x},${a.tile.z}` : '';
     tr.className = a.state === 'ingame' ? '' : 'idle';
+    const rate = a.xpPerHour?.[skill];
     tr.innerHTML = `<td>${a.name}</td><td class="num">${s.level ?? '-'}</td><td class="num">${s.base ?? '-'}</td>`
-      + `<td class="num">${s.xp ?? '-'}</td><td>${a.state ?? ''}</td><td>${(a.script || '').replace(/^bots\//, '')}</td>`
+      + `<td class="num">${s.xp ?? '-'}</td><td class="num">${rate ? fmtRate(rate) : '-'}</td>`
+      + `<td>${a.state ?? ''}</td><td>${(a.script || '').replace(/^bots\//, '')}</td>`
       + `<td>${tile}</td><td class="num">${a.maxHp ? `${a.hp}/${a.maxHp}` : ''}</td><td class="num">${a.run ?? ''}</td>`;
     rows.appendChild(tr);
   }

@@ -47,11 +47,114 @@ def script_options():
     return options
 
 
+HISTORY_PATH = os.path.join(STATUS_DIR, 'history.json')
+# Snapshot history kept per account: enough for a few days of 5-minute samples.
+HISTORY_POINTS = 500
+# An XP/hr window uses at most this many recent samples, so a stale gap doesn't skew it.
+RATE_SAMPLES = 12
+
+
+def _now_epoch():
+    return time.time()
+
+
+def _parse_time(text):
+    try:
+        return time.mktime(time.strptime(text, '%Y-%m-%dT%H:%M:%SZ')) - time.timezone
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_history():
+    try:
+        with open(HISTORY_PATH) as handle:
+            data = json.load(handle)
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _save_history(history):
+    try:
+        temporary = HISTORY_PATH + '.tmp'
+        with open(temporary, 'w') as handle:
+            json.dump(history, handle)
+        os.replace(temporary, HISTORY_PATH)
+    except OSError:
+        pass
+
+
+def _record_history(history, account, xp_by_skill, stamp):
+    """Appends one snapshot per account per writtenAt, so repeated polls don't duplicate points."""
+    name = account.get('name', '?')
+    points = history.setdefault(name, [])
+    if points and points[-1].get('t') == stamp:
+        return
+    points.append({'t': stamp, 'xp': xp_by_skill})
+    if len(points) > HISTORY_POINTS:
+        del points[:len(points) - HISTORY_POINTS]
+
+
+def _xp_per_hour(points):
+    """XP/hr per skill over the last RATE_SAMPLES samples, compared with the oldest in the window.
+
+    Needs at least two samples; a fresh login starts again."""
+    if len(points) < 2:
+        return {}
+    # Why: a relogin resets or rewinds XP (deaths, a different account state), so compare only the most
+    # recent run of samples where every skill is non-decreasing: a monotonic tail per account.
+    last = points[-1]
+    end = last.get('xp', {})
+    in_window = points[-RATE_SAMPLES:] if len(points) > RATE_SAMPLES else points
+    first = None
+    for candidate in reversed(in_window[:-1]):
+        start = candidate.get('xp', {})
+        monotonic = all(end.get(skill, 0) >= start.get(skill, 0) for skill in end)
+        if monotonic:
+            first = candidate
+        else:
+            break
+    if first is None:
+        return {}
+
+    # Skip trailing samples that show no gain, so time spent logged out or idle before the current
+    # burst doesn't water the rate down. The cut-off still has to be monotonic.
+    baseline = first
+    for candidate in in_window[:-1]:
+        if candidate['t'] <= first['t']:
+            continue
+        gain = any(end.get(skill, 0) > candidate.get('xp', {}).get(skill, 0) for skill in end)
+        if gain:
+            baseline = candidate
+            break
+    first = baseline
+
+    hours = (last['t'] - first['t']) / 3600.0
+    if hours <= 10 / 3600.0:
+        return {}
+
+    rates = {}
+    for skill, xp in end.items():
+        gain = xp - first.get('xp', {}).get(skill, 0)
+        if gain > 0:
+            rates[skill] = round(gain / hours)
+    return rates
+
+
 def read_status():
-    """Merge every status file into one account list, newest write per account winning."""
+    """Merge every status file into one account list, newest write per account winning.
+
+    Also records the snapshot in status/history.json and adds each skill's xp/hr."""
     accounts = {}
     worlds = {}
+    history = _load_history()
+    recorded = False
+
     for path in sorted(glob.glob(os.path.join(STATUS_DIR, '*.json'))):
+        if os.path.basename(path) == 'history.json':
+            continue
         try:
             with open(path) as handle:
                 data = json.load(handle)
@@ -59,13 +162,26 @@ def read_status():
             continue
         world = data.get('world', '?')
         written = data.get('writtenAt', '')
+        stamp = _parse_time(written) or _now_epoch()
         worlds[os.path.basename(path)] = {'writtenAt': written, 'world': world, 'accounts': len(data.get('accounts', []))}
         for account in data.get('accounts', []):
             entry = dict(account)
             entry['world'] = world
             entry['writtenAt'] = written
+            skills = entry.get('skills') or {}
+            _record_history(history, entry, {name: skill.get('xp', 0) for name, skill in skills.items()}, stamp)
+            recorded = True
             accounts[entry.get('name', '?')] = entry
-    return {'accounts': [accounts[name] for name in sorted(accounts, key=lambda n: (len(n), n))], 'files': worlds}
+
+    if recorded:
+        _save_history(history)
+
+    merged = []
+    for name in sorted(accounts, key=lambda n: (len(n), n)):
+        entry = accounts[name]
+        entry['xpPerHour'] = _xp_per_hour(history.get(name, []))
+        merged.append(entry)
+    return {'accounts': merged, 'files': worlds}
 
 
 def fleet_state():
