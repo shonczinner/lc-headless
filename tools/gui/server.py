@@ -209,6 +209,36 @@ def read_status():
     return {'accounts': merged, 'files': worlds}
 
 
+def bank_totals():
+    """Sums the per-account bank snapshots the client writes on every bank open."""
+    bank_dir = os.path.join(ROOT, 'bank')
+    items = {}
+    snapshots = []
+    for path in sorted(glob.glob(os.path.join(bank_dir, '*.json'))):
+        if os.path.basename(path) == 'totals.json':
+            continue
+        try:
+            with open(path) as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        account = data.get('account') or os.path.splitext(os.path.basename(path))[0]
+        snapshots.append({'account': account, 'time': data.get('time', ''), 'world': data.get('world', '')})
+        for item in data.get('items', []):
+            ident = int(item.get('id', -1))
+            entry = items.setdefault(ident, {'id': ident, 'name': item.get('name') or '', 'qty': 0, 'accounts': []})
+            entry['qty'] += int(item.get('qty', 0))
+            if not entry['name'] and item.get('name'):
+                entry['name'] = item['name']
+            entry['accounts'].append(account)
+    ordered = sorted(items.values(), key=lambda e: (-e['qty'], e['id']))
+    for entry in ordered:
+        entry['accounts'] = sorted(set(entry['accounts']))
+        entry['accountCount'] = len(entry['accounts'])
+    return {'updatedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'accounts': len(snapshots), 'items': ordered, 'snapshots': snapshots}
+
+
 def fleet_state():
     """Running worlds, CPU and memory, from /proc."""
     pids = []
@@ -381,6 +411,8 @@ class Handler(BaseHTTPRequestHandler):
             state['state'] = STATE['status']
             state['detail'] = STATE['detail']
             self._send(200, state)
+        elif path == '/api/bank':
+            self._send(200, bank_totals())
         elif path == '/api/log':
             try:
                 with open(os.path.join(LOGS_DIR, 'world1.log'), 'rb') as handle:

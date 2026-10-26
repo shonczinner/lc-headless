@@ -40,6 +40,8 @@ struct ScriptingSettings_s
     std::string progressDirectory = "progress";
     // Where the C++ client writes status/<world>.json for the GUI; empty turns it off.
     std::string statusDirectory = "status";
+    // Where each account's bank contents are logged on open; empty turns it off.
+    std::string bankLogDirectory = "bank";
 };
 
 // client.jsonc.

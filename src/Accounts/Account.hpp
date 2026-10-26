@@ -12,6 +12,7 @@
 #include "../Script/Host/ScriptHost.hpp"
 #include "../Script/ScriptCommand_s.hpp"
 #include "../Script/ScriptRuntime.hpp"
+#include "BankLogger.hpp"
 #include "ProgressReporter.hpp"
 
 struct AccountOptions_s
@@ -95,6 +96,8 @@ private:
     BotMessenger* m_messenger;
     GameClient m_client;
     ProgressReporter m_progress;
+    // Logs the bank's contents whenever one is opened.
+    std::optional<BankLogger> m_bankLog;
     std::optional<ScriptHost> m_script;
     bool m_started = false;
     bool m_finished = false;
