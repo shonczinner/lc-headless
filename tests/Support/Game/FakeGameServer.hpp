@@ -26,7 +26,7 @@ struct ReceivedPacket_s
 // server's thread.
 struct FakeServerClient_s
 {
-    FakeServerClient_s(boost::asio::ip::tcp::socket tcp, bool raw);
+    FakeServerClient_s(boost::asio::ip::tcp::socket tcp, bool rawMode);
 
     // Over raw TCP, never upgraded: only its next layer, the TCP socket, is used.
     boost::beast::websocket::stream<boost::asio::ip::tcp::socket> socket;
