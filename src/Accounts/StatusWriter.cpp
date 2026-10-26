@@ -79,18 +79,25 @@ StatusWriter::StatusWriter(std::filesystem::path file, std::string world)
 
 void StatusWriter::Step(Clock::time_point now, const std::vector<std::unique_ptr<Account>>& accounts, bool lifeChanged)
 {
-    if (!lifeChanged && m_next && now < *m_next)
+    const auto intervalDue = !m_next || now >= *m_next;
+    if (!lifeChanged && !intervalDue)
     {
         return;
     }
 
-    m_next = now + INTERVAL;
+    if (intervalDue)
+    {
+        m_next = now + INTERVAL;
+    }
 
     auto json = std::string{};
     json.reserve(accounts.size() * 512 + 128);
-    std::format_to(std::back_inserter(json), "{{\n  \"world\": \"{}\",\n  \"writtenAt\": \"{}\",\n  \"scheduled\": {},\n  \"accounts\": [\n",
+    // period: the 5-minute write. event: a lifecycle write (login, logout, script change), which the
+    // GUI shows at once but excludes from its rates.
+    const auto* const kind = intervalDue ? "period" : "event";
+    std::format_to(std::back_inserter(json), "{{\n  \"world\": \"{}\",\n  \"writtenAt\": \"{}\",\n  \"kind\": \"{}\",\n  \"accounts\": [\n",
                    Escape(m_world), std::format("{:%Y-%m-%dT%H:%M:%SZ}", std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())),
-                   lifeChanged ? "false" : "true");
+                   kind);
 
     auto signature = std::string{};
     auto first = true;

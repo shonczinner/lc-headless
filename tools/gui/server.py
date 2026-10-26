@@ -181,7 +181,8 @@ def read_status():
             continue
         world = data.get('world', '?')
         written = data.get('writtenAt', '')
-        scheduled = bool(data.get('scheduled', False))
+        # Only the periodic write feeds rates; lifecycle ('event') writes just refresh the table.
+        scheduled = data.get('kind') == 'period' if 'kind' in data else bool(data.get('scheduled', False))
         stamp = _parse_time(written) or _now_epoch()
         worlds[os.path.basename(path)] = {'writtenAt': written, 'world': world, 'scheduled': scheduled,
                                           'accounts': len(data.get('accounts', []))}
