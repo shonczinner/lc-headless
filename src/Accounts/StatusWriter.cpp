@@ -77,9 +77,9 @@ StatusWriter::StatusWriter(std::filesystem::path file, std::string world)
 {
 }
 
-void StatusWriter::Step(Clock::time_point now, const std::vector<std::unique_ptr<Account>>& accounts, bool force)
+void StatusWriter::Step(Clock::time_point now, const std::vector<std::unique_ptr<Account>>& accounts, bool lifeChanged)
 {
-    if (!force && m_next && now < *m_next)
+    if (!lifeChanged && m_next && now < *m_next)
     {
         return;
     }
@@ -90,7 +90,7 @@ void StatusWriter::Step(Clock::time_point now, const std::vector<std::unique_ptr
     json.reserve(accounts.size() * 512 + 128);
     std::format_to(std::back_inserter(json), "{{\n  \"world\": \"{}\",\n  \"writtenAt\": \"{}\",\n  \"scheduled\": {},\n  \"accounts\": [\n",
                    Escape(m_world), std::format("{:%Y-%m-%dT%H:%M:%SZ}", std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())),
-                   force ? "false" : "true");
+                   lifeChanged ? "false" : "true");
 
     auto signature = std::string{};
     auto first = true;
@@ -138,7 +138,7 @@ void StatusWriter::Step(Clock::time_point now, const std::vector<std::unique_ptr
     json += "\n  ]\n}\n";
 
     // Nothing changed since the last write and the interval hasn't come round again: skip the I/O.
-    if (!force && signature == m_lastSignature)
+    if (!lifeChanged && signature == m_lastSignature)
     {
         return;
     }

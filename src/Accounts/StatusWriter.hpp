@@ -22,9 +22,9 @@ public:
 
     // Writes when the interval has passed, or always when forced (a login, a script starting or
     // stopping, a logout), so the GUI is never blind to lifecycle changes.
-    // `scheduled` marks the periodic write; forced (lifecycle) writes mark themselves as unscheduled,
-    // so the GUI can compute rates from evenly spaced points only.
-    void Step(Clock::time_point now, const std::vector<std::unique_ptr<Account>>& accounts, bool force = false);
+    // `lifeChanged` bypasses the interval and the unchanged check, so a GUI sees a login or logout at
+    // once. The write is still periodic in kind (scheduled), which is what the GUI's rates use.
+    void Step(Clock::time_point now, const std::vector<std::unique_ptr<Account>>& accounts, bool lifeChanged = false);
 
     [[nodiscard]] const std::filesystem::path& GetPath() const { return m_path; }
 

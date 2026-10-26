@@ -279,9 +279,11 @@ void AccountRunner::WriteStatus()
         std::format_to(std::back_inserter(signature), "{}:{}:{}|", account->GetName(), static_cast<int>(client.GetStatus()), account->GetScriptFile());
     }
 
-    const auto force = signature != m_statusSignature;
+    // The periodic write feeds the GUI's xp/hr; a lifecycle change just brings the snapshot forward.
+    // Why: a force flag would mark every login burst as "unscheduled", so rates would never compute.
+    const auto lifeChanged = signature != m_statusSignature;
     m_statusSignature = std::move(signature);
-    m_status->Step(Clock::now(), m_accounts, force);
+    m_status->Step(Clock::now(), m_accounts, lifeChanged);
 }
 
 bool AccountRunner::LogOutcomes() const
